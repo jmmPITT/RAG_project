@@ -4,7 +4,7 @@ import os
 import faiss
 import torch
 from transformers import AutoTokenizer, AutoModel, pipeline
-
+import numpy as np
 # If you want to reuse the pdf_extractor from your project:
 from pdf_extractor import extract_text_from_pdf
 
@@ -14,7 +14,7 @@ def load_pdf_text():
     return extract_text_from_pdf(pdf_path)
 
 # 2. SPLIT TEXT INTO CHUNKS (if needed)
-def chunk_text(text, chunk_size=512, overlap=50):
+def chunk_text(text, chunk_size=16, overlap=8):
     """
     Splits text into chunks for embedding.
     """
@@ -38,17 +38,25 @@ def load_embedding_model(model_name="sentence-transformers/all-MiniLM-L6-v2"):
     model = AutoModel.from_pretrained(model_name)
     return tokenizer, model
 
-def compute_embeddings(tokenizer, model, texts):
-    """
-    Compute embeddings for a list of texts using a huggingface transformer model.
-    """
-    # Convert to tokens
-    inputs = tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
-    with torch.no_grad():
-        outputs = model(**inputs)
-    # Pool the [CLS] token for simplicity
-    embeddings = outputs.last_hidden_state[:, 0, :].numpy()
-    return embeddings
+def compute_embeddings(tokenizer, model, texts, batch_size=32):
+    all_embeddings = []
+    for i in range(0, len(texts), batch_size):
+        batch_texts = texts[i : i + batch_size]
+        inputs = tokenizer(
+            batch_texts,
+            padding=True,
+            truncation=True,
+            max_length=512,  # or some limit
+            return_tensors="pt",
+        )
+        with torch.no_grad():
+            outputs = model(**inputs)
+        # Pool the [CLS] token for BERT-like
+        batch_embeddings = outputs.last_hidden_state[:, 0, :].cpu().numpy()
+        all_embeddings.append(batch_embeddings)
+    
+    return np.concatenate(all_embeddings, axis=0)
+
 
 # 4. BUILD A VECTOR STORE (using FAISS)
 def build_faiss_index(embeddings):
